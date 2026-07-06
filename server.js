@@ -8,9 +8,13 @@ const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const db = new Database(path.join(__dirname, 'data', 'blanc.db'));
+const dataDir = path.join(__dirname, 'data');
 const uploadDir = path.join(__dirname, 'uploads');
+
+fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(uploadDir, { recursive: true });
+
+const db = new Database(path.join(dataDir, 'inventory.db'));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
