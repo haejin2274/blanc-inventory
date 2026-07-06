@@ -24,7 +24,7 @@ app.use(session({
   cookie: { sameSite: 'lax', secure: process.env.NODE_ENV === 'production' }
 }));
 app.use('/uploads', express.static(uploadDir));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(__dirname));
 
 const storage = multer.diskStorage({
   destination: (_, __, cb) => cb(null, uploadDir),
