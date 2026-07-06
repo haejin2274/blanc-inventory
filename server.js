@@ -21,7 +21,8 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'change-this-before-deploying',
   resave: false,
   saveUninitialized: false,
-  cookie: { sameSite: 'lax', secure: process.env.NODE_ENV === 'production' }
+  proxy: true,
+  cookie: { sameSite: 'lax', secure: false }
 }));
 app.use('/uploads', express.static(uploadDir));
 app.use(express.static(__dirname));
