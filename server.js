@@ -16,7 +16,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(session({ secret: process.env.SESSION_SECRET || 'change-this-before-deploying', resave:false, saveUninitialized:false, cookie:{sameSite:'lax', secure:false} }));
 app.use('/uploads', express.static(uploadDir));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(__dirname));
 
 const storage = multer.diskStorage({
  destination: (_,__,cb)=>cb(null,uploadDir),
