@@ -50,6 +50,10 @@ const all = async (text, params = []) => (await q(text, params)).rows;
 const today = () => new Date().toISOString().slice(0, 10);
 
 async function init() {
+  // 기존 Supabase 테이블에도 새 항목을 안전하게 추가합니다.
+  await q(`alter table products add column if not exists expiry_date date`);
+  await q(`alter table products add column if not exists note text not null default ''`);
+
   await q(`
     insert into organizations (name, short_name)
     values ('블랑여성의원','블랑여성의원'), ('닥터플로셀','닥터플로셀')
@@ -125,7 +129,6 @@ app.post('/api/switch-org', auth, async (req, res, next) => {
 app.get('/api/dashboard', auth, async (req, res, next) => {
   try {
     const org = req.session.user.orgId;
-    const total = (await one('select count(*)::int as c from products where org_id=$1', [org])).c;
     const low = (await one('select count(*)::int as c from products where org_id=$1 and stock<=min_stock', [org])).c;
     const todayIn = (await one('select coalesce(sum(qty),0)::int as c from purchases where org_id=$1 and inbound_date=$2', [org, today()])).c;
     const todayOut = (await one('select coalesce(sum(qty),0)::int as c from outbounds where org_id=$1 and outbound_date=$2', [org, today()])).c;
@@ -133,7 +136,7 @@ app.get('/api/dashboard', auth, async (req, res, next) => {
       from purchases p join products pr on pr.id=p.product_id join users u on u.id=p.created_by
       where p.org_id=$1 order by p.id desc limit 5`, [org]);
     const lowRows = (await all('select * from products where org_id=$1 and stock<=min_stock order by stock asc,name', [org])).map(productRow);
-    res.json({ total, low, todayIn, todayOut, recent, lowRows });
+    res.json({ low, todayIn, todayOut, recent, lowRows });
   } catch (e) { next(e); }
 });
 
@@ -142,9 +145,10 @@ app.get('/api/products', auth, async (req, res, next) => {
 });
 app.post('/api/products', auth, async (req, res, next) => {
   try {
-    const { name, spec = '', vendor = '', stock = 0, minStock = 0 } = req.body;
+    const { name, spec = '', vendor = '', stock = 0, minStock = 0, expiryDate = null, note = '' } = req.body;
     if (!name?.trim()) return res.status(400).json({ message: '제품명을 입력하세요.' });
-    const row = await one(`insert into products(org_id,name,spec,vendor,stock,min_stock,created_by) values($1,$2,$3,$4,$5,$6,$7) returning *`, [req.session.user.orgId, name.trim(), spec.trim(), vendor.trim(), Math.max(0, Number(stock) || 0), Math.max(0, Number(minStock) || 0), req.session.user.id]);
+    const row = await one(`insert into products(org_id,name,spec,vendor,stock,min_stock,expiry_date,note,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
+      [req.session.user.orgId, name.trim(), spec.trim(), vendor.trim(), Math.max(0, Number(stock) || 0), Math.max(0, Number(minStock) || 0), expiryDate || null, note.trim(), req.session.user.id]);
     await log(req, '제품 추가', '제품', name.trim(), `초기 재고 ${Number(stock) || 0}개`);
     res.json(row);
   } catch (e) { next(e); }
@@ -153,8 +157,9 @@ app.put('/api/products/:id', auth, adminOnly, async (req, res, next) => {
   try {
     const product = await ownProduct(req.params.id, req.session.user.orgId);
     if (!product) return res.status(404).json({ message: '제품을 찾을 수 없습니다.' });
-    const { name, spec = '', vendor = '', stock = 0, minStock = 0 } = req.body;
-    await q('update products set name=$1,spec=$2,vendor=$3,stock=$4,min_stock=$5 where id=$6 and org_id=$7', [name, spec, vendor, Math.max(0, Number(stock) || 0), Math.max(0, Number(minStock) || 0), product.id, req.session.user.orgId]);
+    const { name, spec = '', vendor = '', stock = 0, minStock = 0, expiryDate = null, note = '' } = req.body;
+    await q('update products set name=$1,spec=$2,vendor=$3,stock=$4,min_stock=$5,expiry_date=$6,note=$7 where id=$8 and org_id=$9',
+      [name, spec, vendor, Math.max(0, Number(stock) || 0), Math.max(0, Number(minStock) || 0), expiryDate || null, note.trim(), product.id, req.session.user.orgId]);
     await log(req, '제품 수정', '제품', name, `재고 ${product.stock}개 → ${Math.max(0, Number(stock) || 0)}개`);
     res.json({ ok: true });
   } catch (e) { next(e); }
@@ -206,7 +211,9 @@ app.post('/api/outbounds', auth, async (req, res, next) => {
 
 app.get('/api/purchases', auth, async (req, res, next) => { try { res.json(await all(`select p.*,pr.name product_name,u.name user_name from purchases p join products pr on pr.id=p.product_id join users u on u.id=p.created_by where p.org_id=$1 order by p.inbound_date desc,p.id desc`, [req.session.user.orgId])); } catch (e) { next(e); } });
 app.get('/api/outbounds', auth, async (req, res, next) => { try { res.json(await all(`select o.*,pr.name product_name,u.name user_name from outbounds o join products pr on pr.id=o.product_id join users u on u.id=o.created_by where o.org_id=$1 order by o.outbound_date desc,o.id desc`, [req.session.user.orgId])); } catch (e) { next(e); } });
-app.get('/api/audit-logs', auth, adminOnly, async (req, res, next) => { try { res.json(await all('select * from audit_logs where org_id=$1 order by id desc limit 150', [req.session.user.orgId])); } catch (e) { next(e); } });
+app.get('/api/audit-logs', auth, adminOnly, async (req, res, next) => {
+  try { res.json(await all('select * from audit_logs where org_id=$1 order by id desc limit 150', [req.session.user.orgId])); } catch (e) { next(e); }
+});
 
 app.get('/api/users', auth, adminOnly, async (req, res, next) => {
   try { res.json(await all(`select u.id,u.username,u.name,u.role,u.active,u.created_at,string_agg(o.name,' · ' order by o.id) as organizations from users u join user_organizations uo on uo.user_id=u.id join organizations o on o.id=uo.org_id group by u.id order by u.role desc,u.name`)); } catch (e) { next(e); }
@@ -252,3 +259,4 @@ app.use((err, req, res, next) => {
 });
 
 init().then(() => app.listen(PORT, () => console.log(`재고관리 실행: http://localhost:${PORT}`))).catch(err => { console.error(err); process.exit(1); });
+
